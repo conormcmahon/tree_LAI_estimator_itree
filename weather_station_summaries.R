@@ -19,7 +19,7 @@
 #       Vector polygon layer of individual tree crowns (produced by
 #       get_lai_at_crowns.R), with attribute columns "LAI",
 #       "max_tree_height_m" (total tree height), "crown_height_m" (height
-#       to the base of the live crown), and "poly_id".
+#       of the crown overall), and "poly_id".
 #   - landcover_nyc_2021_6in.tif
 #       Single-band classified land cover raster (Zenodo record 14053441)
 #       with integer classes:
@@ -57,6 +57,7 @@ library(units)
 weather_station_path <- "F:/NYC/flux_sites/location_NYC_sites.csv"
 tree_crown_polygon_path <- "tree_polygon_lai_estimates.gpkg"
 landcover_raster_path <- "F:/NYC/Tree_Data/crowns/landcover_nyc_2021_6in.tif"
+modeled_lai_monthly_path <- "modeled_lai_monthly.csv"
 output_summary_path <- "weather_station_buffer_summaries.csv"
 
 buffer_radii_m <- c(250, 500)
@@ -136,7 +137,7 @@ summarize_tree_structure <- function(crowns, buffers) {
     summarize(
       mean_lai = weighted.mean(LAI, crown_fragment_area_m2, na.rm = TRUE),
       mean_tree_height_m = weighted.mean(max_tree_height_m, crown_fragment_area_m2, na.rm = TRUE),
-      mean_crown_base_height_m = weighted.mean(crown_height_m, crown_fragment_area_m2, na.rm = TRUE),
+      mean_crown_base_height_m = weighted.mean(max_tree_height_m-crown_height_m, crown_fragment_area_m2, na.rm = TRUE),
       mean_crown_effective_radius_m = weighted.mean(crown_effective_radius_m, crown_fragment_area_m2, na.rm = TRUE),
       .groups = "drop"
     )
@@ -164,34 +165,41 @@ tree_structure_summary <- summarize_tree_structure(tree_crowns, station_buffers)
 summarize_landcover_fractions <- function(landcover_raster, buffers, class_labels) {
   buffers_reproj <- st_transform(buffers, crs(landcover_raster))
 
+  # Only carry the join keys (station_row_id, buffer_radius_m) forward from
+  # buffers_reproj, rather than every station attribute column, so this
+  # doesn't produce columns that collide (and get .x/.y suffixed) with the
+  # same station attributes already present in station_lookup at the final
+  # left_join.
+  buffer_keys <- buffers_reproj |> dplyr::select(station_row_id, buffer_radius_m)
+
   # Extract land cover class values in each buffer radius
   # land cover class value and the fraction of that cell covered by the
   # polygon (columns: ID, <layer name>, fraction).
   # output is a list of dataframes, one for each buffer radius
   cover_values <- exactextractr::exact_extract(landcover_raster, buffers_reproj)
-  buffer_ind <- 0 
+  buffer_ind <- 0
   cover_fractions <- lapply(cover_values,
          function(new_df){
            buffer_ind <<- buffer_ind + 1
            cat("\nWorking on data for buffer index", buffer_ind)
-           summary_df <- new_df |> group_by(value) |> 
-                    summarize(total_cover = sum(coverage_fraction, na.rm=TRUE)) |> 
-                    ungroup() |> 
-                    mutate(fractional_cover = total_cover / sum(total_cover, na.rm=TRUE)) |> 
-                    dplyr::select(-total_cover) |> 
+           summary_df <- new_df |> group_by(value) |>
+                    summarize(total_cover = sum(coverage_fraction, na.rm=TRUE)) |>
+                    ungroup() |>
+                    mutate(fractional_cover = total_cover / sum(total_cover, na.rm=TRUE)) |>
+                    dplyr::select(-total_cover) |>
                     pivot_wider(names_from=value, values_from=fractional_cover, names_prefix="LC_")
            if(nrow(summary_df) != 0)
-             return(summary_df |> 
-                      cbind(buffers_reproj[buffer_ind,]))
+             return(summary_df |>
+                      cbind(buffer_keys[buffer_ind,]))
            return(summary_df)
-         }) |> 
+         }) |>
     bind_rows()
   # Re-order names
-  cover_fractions <- cover_fractions |> 
-    dplyr::select(names(buffers_reproj), paste0("LC_", 1:8))
-  names(cover_fractions) <- c(names(buffers_reproj),
-                              "tree_cover", "grass_cover", "bare_ground_cover", 
-                              "water_cover", "building_cover", "road_cover", 
+  cover_fractions <- cover_fractions |>
+    dplyr::select(names(buffer_keys), paste0("LC_", 1:8))
+  names(cover_fractions) <- c(names(buffer_keys),
+                              "tree_cover", "grass_cover", "bare_ground_cover",
+                              "water_cover", "building_cover", "road_cover",
                               "other_impervious_cover", "railroad_cover")
   
   #         1 = tree canopy, 2 = grass/shrub, 3 = bare ground, 4 = water,
@@ -203,7 +211,37 @@ landcover_fraction_summary <- summarize_landcover_fractions(landcover, station_b
 
 # ---- Add seasonal variability from MODIS (fixed, average across city) --------
 
+#' Expand a per-site peak-season LAI value into 12 monthly LAI values.
+#'
+#' `modeled_lai_monthly.csv` gives a single city-wide-average seasonal curve
+#' (deciduous canopy LAI runs from ~0 in winter dormancy up to a summer
+#' peak), and each site's `mean_lai` computed above is treated as that
+#' site's own peak-season value. Each month's site-level LAI is therefore
+#' `mean_lai * (monthly_lai / max(monthly_lai))`, i.e. the fixed seasonal
+#' curve is linearly rescaled from 0 to `mean_lai` at every site.
+#'
+#' @param peak_lai Numeric vector of per-site peak-season LAI values
+#'   (the existing `mean_lai` column).
+#' @param monthly_lai Numeric vector of length 12, city-average LAI for
+#'   each month in calendar order (Jan-Dec).
+#' @return Tibble with one row per element of `peak_lai` and columns
+#'   `lai_01`..`lai_12`.
+scale_lai_seasonally <- function(peak_lai, monthly_lai) {
+  stopifnot(length(monthly_lai) == 12)
+  seasonal_fraction <- monthly_lai / max(monthly_lai, na.rm = TRUE)
+  monthly_lai_matrix <- outer(peak_lai, seasonal_fraction)
+  colnames(monthly_lai_matrix) <- sprintf("lai_%02d", 1:12)
+  as_tibble(monthly_lai_matrix)
+}
 
+modeled_lai_monthly <- read_csv(modeled_lai_monthly_path) |>
+  arrange(doy)
+
+stopifnot(nrow(modeled_lai_monthly) == 12)
+
+tree_structure_summary <- tree_structure_summary |>
+  bind_cols(scale_lai_seasonally(tree_structure_summary$mean_lai, modeled_lai_monthly$LAI)) |>
+  select(-mean_lai)
 
 # ---- Combine summaries and write output ---------------------------------------
 
@@ -215,4 +253,8 @@ weather_station_summary <- station_lookup |>
   left_join(tree_structure_summary, by = c("station_row_id", "buffer_radius_m")) |>
   left_join(landcover_fraction_summary, by = c("station_row_id", "buffer_radius_m"))
 
-write_csv(weather_station_summary, output_summary_path)
+write_csv(weather_station_summary |> 
+            dplyr::select(-geometry) |> 
+            drop_na(lai_01) |> 
+            mutate(across(everything(), ~ replace_na(.x, 0))), 
+          output_summary_path)
