@@ -47,13 +47,15 @@ We use the allometric equations specified by [Nowak, 1996 for iTree](https://www
 
 ![Genus-specific LAI Variation with DBH](output_plots/LAI_crown_diameter_genera_plot.png)
 
-![Overall Variation in LAI with Tree Height](output_plots/LAI_height_plot.png)
+<p align="center">
+  <img src="output_plots/LAI_height_plot.png" style="width: 50%; height: auto;">
+</p> 
 
 # Scaling For Climate Models:
 
 Finally, we rescale our data to grid cell scale for use in an urban climate model. Currently we do this at a set of weather stations for initial testing. We also include outputs at 500 m wall-to-wall scale, using the MODIS sinusoidal projection: 
 
-![Weather Station Map](output_plots/LAI_raster_map.png)
+![Weather Station Map](output_plots/weather_station_map.png)
 
 ![LAI Map](output_plots/LAI_raster_map.png)
 
