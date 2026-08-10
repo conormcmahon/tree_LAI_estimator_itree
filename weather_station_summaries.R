@@ -158,7 +158,12 @@ tree_structure_summary <- summarize_tree_structure(tree_crowns, station_buffers)
 #' @param buffers sf polygon layer of buffers, one row per station x
 #'   radius, with columns station_row_id and buffer_radius_m.
 #' @param class_labels Named character vector mapping land cover integer
-#'   codes (as strings) to human-readable class names.
+#'   codes (as strings) to human-readable class names. NOTE: currently
+#'   unused - the output column names below are hardcoded instead of being
+#'   derived from this argument. Flagging rather than wiring it up, since
+#'   that's a design choice (and landcover_class_labels' existing names,
+#'   e.g. "tree_canopy", don't match the hardcoded "tree_cover" etc. used
+#'   below).
 #' @return Tibble with one row per station_row_id x buffer_radius_m, and
 #'   one frac_cover_* column per land cover class giving fractional cover
 #'   (0-1).
@@ -195,6 +200,13 @@ summarize_landcover_fractions <- function(landcover_raster, buffers, class_label
          }) |>
     bind_rows()
   # Re-order names
+  # NOTE: this assumes columns LC_1..LC_8 all exist, i.e. every one of the 8
+  # land cover classes shows up in at least one buffer somewhere in the
+  # dataset. pivot_wider() only creates a column for classes actually
+  # present in that buffer's extracted pixels, so if a class is entirely
+  # absent across ALL buffers (e.g. no water in a small/inland extent),
+  # bind_rows() never produces that LC_n column and this select() will
+  # error with "object not found" rather than filling in a 0 column.
   cover_fractions <- cover_fractions |>
     dplyr::select(names(buffer_keys), paste0("LC_", 1:8))
   names(cover_fractions) <- c(names(buffer_keys),

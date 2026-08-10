@@ -1,15 +1,47 @@
 
+# =============================================================================
+# get_lai_at_crowns.R
+#
+# Purpose:
+#   Estimate per-tree Leaf Area Index (LAI) at individual LiDAR-delineated
+#   crowns, using allometric equations from Nowak (1996) (and a comparison
+#   equation from Timilsina et al.) applied to crown height, crown diameter,
+#   DBH (measured or genus-imputed), and a genus-specific shading
+#   coefficient. Also fits/validates the supporting DBH-imputation model and
+#   produces diagnostic plots comparing LAI under several modeling choices
+#   (measured vs. imputed DBH, with vs. without species information).
+#
+# Inputs:
+#   - tree_ndvi_median_jja_jf_2021polygons.rds: per-crown species ID /
+#     genus classification and NDVI summaries.
+#   - treeobjects_2021_nyc.csv: per-crown LiDAR morphometrics (height,
+#     crown radius, DBH where measured).
+#   - crown_height_model.rds: fitted model predicting crown base height
+#     from total height, crown width, and genus.
+#   - species_shading_coefficients.csv: genus-level shading coefficients.
+#   - top_25_genera_nyc_ufia_2024.csv: UFIA urban forestry survey estimates,
+#     used only for an external validation comparison.
+#   - nyc_class_tree_genus_polygons_v2.gpkg: crown polygon geometries.
+#
+# Outputs:
+#   - tree_lai_estimates.csv: one row per crown, with LAI estimates and all
+#     intermediate allometric variables (no geometry).
+#   - tree_lai_estimates.gpkg / tree_polygon_lai_estimates.gpkg: the same
+#     data joined to crown centroid / crown polygon geometry, respectively.
+#   - output_plots/*.png: diagnostic plots (DBH model fit, LAI sensitivity
+#     to imputed DBH and lumped species, LAI vs. DBH/crown diameter/height
+#     by genus, comparison to UFIA genus-level totals).
+#
 # To try tomorrow...
 # Clean up all code
 # Document code
 # Functionalize things more (esp different test cases)
 # Final validation vs. actual iTree?
 # More validation vs. DBH estimate for Nowak, both for Timilsina, and DBH for UTD
-# Simple comparisons of how things would change if all trees shifted genera? 
-# (reach, later) Simple comparisons of how things would change if all trees grew a bit? 
-# Write up some kind of small report about allometry for large trees / concern with Nowak approach 
-
-
+# Simple comparisons of how things would change if all trees shifted genera?
+# (reach, later) Simple comparisons of how things would change if all trees grew a bit?
+# Write up some kind of small report about allometry for large trees / concern with Nowak approach
+# =============================================================================
 
 library(tidyverse)
 library(sf)
@@ -113,12 +145,13 @@ tree_data <- tree_data |>
                                             avg_crown_width = crown_diameter_m/0.3048,
                                             genus = genus_merged),
                                    allow.new.levels=TRUE)) |> 
-  # Remove implausible crown heights
+  # Remove implausible crown heights (clamp to between 1 m and the tree's
+  # own total height, converting the model's feet output to meters)
   mutate(crown_height_m = case_when(
     crown_height_ft < 1/0.3048 ~ 1,
-    crown_height_ft > tree_data$max_tree_height_m/0.3048 ~ max_tree_height_m,
+    crown_height_ft > max_tree_height_m/0.3048 ~ max_tree_height_m,
     TRUE ~ crown_height_ft*0.3048
-  )) |> 
+  )) |>
   dplyr::select(-crown_height_ft)
 # Also make a version which has no species information: 
 tree_data <- tree_data |> 
@@ -129,11 +162,18 @@ tree_data <- tree_data |>
                                                     genus = ""),
                                            allow.new.levels=TRUE)) |> 
   # Remove implausible crown heights
+  # NOTE: the lower-bound threshold here (1) is compared directly against
+  # crown_height_lumped_spp_ft, i.e. it clamps at 1 FOOT. The equivalent
+  # branch above for crown_height_m clamps at 1/0.3048 ft, i.e. 1 METER.
+  # These two blocks look like they're meant to apply the same clamp policy
+  # - flagging the mismatch rather than silently changing which one is
+  # "correct", since either could be intentional and this affects the
+  # already-published tree_lai_estimates.csv.
   mutate(crown_height_lumped_spp = case_when(
     crown_height_lumped_spp_ft < 1 ~ 1,
-    crown_height_lumped_spp_ft > tree_data$max_tree_height_m/0.3048 ~ max_tree_height_m,
+    crown_height_lumped_spp_ft > max_tree_height_m/0.3048 ~ max_tree_height_m,
     TRUE ~ crown_height_lumped_spp_ft*0.3048
-  )) |> 
+  )) |>
   dplyr::select(-crown_height_lumped_spp_ft)
 
 # Sanity check for how many cases fall outside of expected geometry bounds
@@ -313,7 +353,6 @@ ggsave("output_plots/imputed_dbh_impact_plot.png", imputed_dbh_impact_plot,
 species_impact_model <- lm(data=tree_data, 
                                LAI ~ LAI_lumped_spp)
 summary(species_impact_model)
-rmse <- function(x1, x2){ return(sqrt(mean((x1 - x2)^2, na.rm=TRUE)))}
 rmse(tree_data$LAI, tree_data$LAI_lumped_spp)
 species_impact_plot <- ggplot() + 
   geom_density_2d_filled(data=tree_data,
@@ -493,7 +532,7 @@ LAI_dbh_errorbar_plots
 ggsave("output_plots/LAI_dbh_errorbar_plots.png", LAI_dbh_errorbar_plots, 
        height=5.5, width=5.5)
 
-Genus_LAI_plot <- ggplot(tree_data |> 
+LAI_genus_plot <- ggplot(tree_data |> 
                            drop_na(genus_merged) |> 
                            group_by(genus_merged) |> 
                            mutate(count = n()) |> 
@@ -506,8 +545,8 @@ Genus_LAI_plot <- ggplot(tree_data |>
   xlab("Genus") + 
   ylab("LAI") +
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
-Genus_LAI_plot
-ggsave("output_plots/Genus_LAI_plot.png", Genus_LAI_plot, 
+LAI_genus_plot
+ggsave("output_plots/LAI_genus_plot.png", LAI_genus_plot, 
        height=4, width=8)
 
 
@@ -540,7 +579,7 @@ ufia_top_genera <- read_csv("top_25_genera_nyc_ufia_2024.csv") |>
   janitor::clean_names()
 names(ufia_top_genera) <- c("genus_merged", paste0("ufia_", names(ufia_top_genera)))
 
-test <- tree_data |> 
+genus_summary_vs_ufia <- tree_data |> 
   filter(genus_merged %in% classified_genera) |> 
   group_by(genus_merged) |> 
   #drop_na(dbh_cm) |> 
@@ -554,13 +593,13 @@ test <- tree_data |>
             num_trees = n()) |> 
   left_join(ufia_top_genera)
 
-ggplot(test) + 
+ggplot(genus_summary_vs_ufia) + 
   geom_point(aes(x=num_trees, ufia_number_of_trees))
-summary(lm(data=test, 
+summary(lm(data=genus_summary_vs_ufia, 
            ufia_number_of_trees ~ num_trees))
-ggplot(test) + 
+ggplot(genus_summary_vs_ufia) + 
   geom_point(aes(x=leaf_area_total, ufia_leaf_area))
-summary(lm(data=test, 
+summary(lm(data=genus_summary_vs_ufia, 
            leaf_area_total ~ ufia_leaf_area))
 
 

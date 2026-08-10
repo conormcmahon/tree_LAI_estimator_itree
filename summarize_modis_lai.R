@@ -1,4 +1,27 @@
 
+# =============================================================================
+# summarize_modis_lai.R
+#
+# Purpose:
+#   Exploratory visualization of MODIS-derived LAI and phenology (greenup /
+#   greendown) data for NYC: spread of phenology dates, relationship between
+#   peak LAI and phenology timing, and the seasonal LAI curve implied by the
+#   2024 phenoseries raster.
+#
+# Inputs (all under data_dir, from MODIS products, see Zenodo/NASA sources):
+#   - MODIS_LAI_summer_NYC_mean.tif: single-band summer-mean LAI raster
+#     (band "Lai").
+#   - MODIS_phenology_mean.tif: multi-band phenometrics raster (greenup,
+#     mid-greenup, maturity, senescence, mid-greendown, dormancy dates, EVI
+#     amplitude, etc).
+#   - MODIS_LAI_NYC_2024_phenoseries.tif: multi-band raster with one LAI
+#     estimate per ~15-day period across 2024.
+#
+# Output:
+#   This script produces plots for interactive/exploratory review only; it
+#   does not write any files to disk.
+# =============================================================================
+
 library(tidyverse)
 library(terra)
 
@@ -13,19 +36,25 @@ phenoseries_2024 <- terra::rast(paste0(data_dir, "MODIS_LAI_NYC_2024_phenoseries
 names(phenoseries_2024) <- paste0("LAI_2024_period_", sprintf("%02d", 1:(dim(phenoseries_2024)[[3]])))
 
 # Combine data and get into data frame format
-modis_df <- c(summer_lai, 
-              phenometrics, 
+modis_df <- c(summer_lai,
+              phenometrics,
               phenoseries_2024) %>%
   as.data.frame(xy=TRUE)
+# Select phenoseries columns by name rather than a hardcoded column-index
+# range, since that range depends on how many bands summer_lai/phenometrics
+# contain and would silently mis-select columns if those inputs change.
 modis_df_long <- modis_df %>%
-  pivot_longer(29:53, names_prefix="LAI_2024_period_", 
+  pivot_longer(starts_with("LAI_2024_period_"), names_prefix="LAI_2024_period_",
                names_to="period", values_to="period_Lai") %>%
   mutate(period = as.numeric(period))
 
 
-# Visualize spread in Mid-greenup and Mid-greendown dates (inc. with high/low LAI sites)
-# Visualize spread in Mid-greenup and Mid-greendown dates (inc. with high/low LAI sites)
-ggplot() + 
+# Visualize spread in Mid-greenup and Mid-greendown dates (inc. with high/low LAI sites).
+# For each phenometric, the dashed density is restricted to pixels with a
+# valid summer LAI value (Lai), while the solid density uses all pixels with
+# a valid date for that phenometric, so the two lines show whether having
+# tree cover (i.e. a resolvable LAI) shifts the phenology date distribution.
+ggplot() +
   geom_density(data=modis_df %>% 
                  drop_na(Lai, Greenup_1), 
                aes(x=Greenup_1), linetype="dashed", col="lightgreen") + 

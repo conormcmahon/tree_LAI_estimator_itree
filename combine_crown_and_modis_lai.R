@@ -1,7 +1,36 @@
 
-# Load individual tree LAI estimates and MODIS grid
-# Generate a dataset for LAI at the 500 m MODIS scale
-# Normalize it seasonally based on MODIS seasonality 
+# =============================================================================
+# combine_crown_and_modis_lai.R
+#
+# Purpose:
+#   Aggregate individual-tree LAI estimates (from get_lai_at_crowns.R) up to
+#   the ~463 m MODIS sinusoidal grid, compare the resulting LAI against
+#   several independent MODIS-derived LAI products (MCD15A3H LAI, MCD12Q2
+#   EVI amplitude, and the Dong et al. 2025 global urban LAI product), and
+#   fit a seasonal (phenology) curve to the average LAI across the year.
+#
+# Inputs:
+#   - MODIS_phenology_mean.tif, MODIS_LAI_NYC_2024_phenoseries.tif,
+#     MODIS_LAI_summer_NYC_mean.tif (under modis_dir): MODIS phenometrics,
+#     bimonthly 2024 LAI phenoseries, and summer-mean LAI, respectively.
+#   - MODIS_global_urban_dong_2025/*.tif: annual global urban LAI rasters
+#     (Dong et al. 2025), one file per year.
+#   - tree_lai_estimates.gpkg: per-tree LAI point estimates (produced by
+#     get_lai_at_crowns.R), including "leaf_area_imputed_dbh" and
+#     "crown_diameter_m".
+#
+# Outputs:
+#   - lai_raster.tif, total_crown_area.tif, fractional_tree_cover.tif,
+#     mean_lai_of_crowns.tif (under output_dir): rasterized, MODIS-grid-scale
+#     tree LAI / crown area / canopy fraction.
+#   - output_plots/*.png: diagnostic plots comparing the rasterized LAI
+#     against the MODIS/EVI/urban LAI products, and the fitted seasonal LAI
+#     curve.
+#
+# Note: 463.31 (used below to convert between per-cell totals and
+# per-unit-area LAI) is the MODIS sinusoidal grid's actual cell size in
+# meters (the nominal "500 m" MODIS grid).
+# =============================================================================
 
 library(tidyverse)
 library(terra)
@@ -35,6 +64,15 @@ modis_urban_lai_all_years <- lapply(modis_urban_lai_files,
             terra::project(phenology[[1]]) )                                    
 })
 # Note - I was interested in tracking afforestation using the MODIS LAI product. Here's an example:
+#' Fit a per-pixel, per-band linear trend of urban LAI against year.
+#'
+#' Uses the `modis_urban_lai_all_years` and `years` vectors from the
+#' enclosing script scope (not passed as arguments). For each of the 24
+#' bands, stacks that band across all years and regresses pixel value on
+#' year, one pixel at a time.
+#'
+#' @return List of four multi-band SpatRasters (one band per original
+#'   band/period), in order: r-squared, slope p-value, slope, intercept.
 regress_lai_vs_year <- function(){
   # modis_urban_lai_all_years: list of n SpatRasters, each 24 bands (one raster per year)
   # years:   numeric vector length n, in the same order as `modis_urban_lai_all_years`
@@ -131,6 +169,8 @@ lai_points <- st_read("tree_lai_estimates.gpkg") |>
 lai_rasterized <- rasterize(vect(lai_points |> drop_na(leaf_area_imputed_dbh)), 
                             phenometrics, 
                             field = "leaf_area_imputed_dbh", fun = "sum", background = 0)
+# Convert summed leaf area per cell (m^2) to LAI (leaf area per unit
+# ground area), dividing by the MODIS cell's area in m^2 (see header note)
 lai_rasterized <- lai_rasterized / 463.31^2
 names(lai_rasterized) <- "LAI"
 lai_rasterized[lai_rasterized == 0] <- NA
@@ -150,6 +190,10 @@ terra::writeRaster(total_crown_area,
 terra::writeRaster(total_crown_area / (463.31^2), 
                    paste0(output_dir, "/fractional_tree_cover.tif"), 
                    overwrite=TRUE)
+# Recover total leaf area per cell (undoing the /463.31^2 above) and divide
+# by total crown area instead of total ground area, i.e. LAI over just the
+# tree-canopy footprint rather than the whole grid cell (contrast with
+# lai_rasterized/"LAI" above, which is averaged over the whole cell)
 mean_lai_of_crowns <- lai_rasterized * (463.31^2) / total_crown_area
 names(mean_lai_of_crowns) <- "mean_crown_LAI"
 terra::writeRaster(mean_lai_of_crowns, 
@@ -189,7 +233,6 @@ modis_itree_lai_comparison_model <- lm(data=combined_lai_df |>
                                                 !is.infinite(MODIS_LAI)), 
                                        LAI ~ MODIS_LAI)
 summary(modis_itree_lai_comparison_model)
-rmse <- function(x1, x2){ return(sqrt(mean((x1 - x2)^2, na.rm=TRUE)))}
 rmse(combined_lai_df$LAI, combined_lai_df$MODIS_LAI)
 
 MODIS_LAI_comparison_plot <- ggplot(combined_lai_df) + 
@@ -221,21 +264,27 @@ modis_urban_itree_lai_comparison_model <- lm(data=combined_lai_df |>
                                                       !is.infinite(urban_peak_lai)), 
                                              LAI ~ urban_peak_lai)
 summary(modis_urban_itree_lai_comparison_model)
-rmse <- function(x1, x2){ return(sqrt(mean((x1 - x2)^2, na.rm=TRUE)))}
 rmse(combined_lai_df$LAI, combined_lai_df$urban_peak_lai)
 
-MODIS_urban_LAI_comparison_plot <- ggplot(combined_lai_df) + 
-  geom_point(aes(x=urban_peak_lai, mean_crown_LAI), alpha=0.05) + 
-  geom_abline(intercept=0, slope=1, linetype="dashed", col="black") + 
-  geom_abline(intercept=summary(modis_itree_lai_comparison_model)$coefficients[1,1], 
-              slope=summary(modis_itree_lai_comparison_model)$coefficients[2,1], 
-              linetype="solid", col="red") + 
+# NOTE: this plot's aes() uses mean_crown_LAI (not LAI) on the y-axis, but
+# the abline/R^2/RMSE annotations below are still keyed to
+# modis_itree_lai_comparison_model (the LAI ~ MODIS_LAI model fit above),
+# not modis_urban_itree_lai_comparison_model (LAI ~ urban_peak_lai, fit just
+# above this block) - and neither model was fit against mean_crown_LAI in
+# the first place. Flagging rather than guessing which of {LAI,
+# mean_crown_LAI} vs. which fitted model was actually intended here.
+MODIS_urban_LAI_comparison_plot <- ggplot(combined_lai_df) +
+  geom_point(aes(x=urban_peak_lai, mean_crown_LAI), alpha=0.05) +
+  geom_abline(intercept=0, slope=1, linetype="dashed", col="black") +
+  geom_abline(intercept=summary(modis_itree_lai_comparison_model)$coefficients[1,1],
+              slope=summary(modis_itree_lai_comparison_model)$coefficients[2,1],
+              linetype="solid", col="red") +
   annotate("text", x=0.5, y=7.5, parse=TRUE, hjust=0,
-           label = paste("R^2 == ", 
-                         round(summary(modis_itree_lai_comparison_model)$adj.r.squared, 2))) + 
+           label = paste("R^2 == ",
+                         round(summary(modis_itree_lai_comparison_model)$adj.r.squared, 2))) +
   annotate("text", x=0.5, y=7, hjust=0,
-           label = paste("RMSE = ", 
-                         round(rmse(combined_lai_df$mean_crown_LAI, combined_lai_df$urban_peak_lai), 2))) + 
+           label = paste("RMSE = ",
+                         round(rmse(combined_lai_df$mean_crown_LAI, combined_lai_df$urban_peak_lai), 2))) +
   theme_bw() + 
   labs(x = "MODIS LAI Estimate", 
        y = "iTree-derived LAI Estimate") + 
