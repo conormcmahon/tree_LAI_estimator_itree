@@ -32,15 +32,14 @@
 #     to imputed DBH and lumped species, LAI vs. DBH/crown diameter/height
 #     by genus, comparison to UFIA genus-level totals).
 #
-# To try tomorrow...
-# Clean up all code
-# Document code
+# To do...
 # Functionalize things more (esp different test cases)
-# Final validation vs. actual iTree?
-# More validation vs. DBH estimate for Nowak, both for Timilsina, and DBH for UTD
+# More validation vs. DBH-based for Nowak, both for Timilsina, and DBH for UTD
 # Simple comparisons of how things would change if all trees shifted genera?
-# (reach, later) Simple comparisons of how things would change if all trees grew a bit?
-# Write up some kind of small report about allometry for large trees / concern with Nowak approach
+# (reach goal, later) Simple comparisons of how things would change if all trees 
+#   grew a bit?
+# Write up some kind of small report about allometry for large trees / concern 
+#   with Nowak approach
 # =============================================================================
 
 library(tidyverse)
@@ -52,12 +51,20 @@ library(janitor)
 # Root mean square error function
 rmse <- function(x1, x2){ return(sqrt(mean((x1 - x2)^2, na.rm=TRUE)))}
 
+# For consistency, set random seed
+set.seed(1)
+
+# Set the filepaths for a few large data files not shipped via git
+tree_species_info_filepath <- "F:/NYC/Tree_Data/crowns/tree_ndvi_median_jja_jf_2021polygons.rds"
+crown_morphometrics_filepath <- "F:/NYC/Tree_Data/crowns/treeobjects_2021_nyc.csv"
+tree_polygons_filepath <- "F:/NYC/Tree_Data/crowns/miller_scientific_data/nyc_class_tree_genus_polygons_v2.gpkg"
+
 # Load data files with tree species and with crown geometry (height, radius)
-tree_species_info <- read_rds("F:/NYC/Tree_Data/crowns/tree_ndvi_median_jja_jf_2021polygons.rds") |>
+tree_species_info <- read_rds(tree_species_info_filepath) |>
   janitor::clean_names() |> 
   group_by(poly_id) |> 
   slice_head(n=1)
-crown_morphometrics <- read_csv("F:/NYC/Tree_Data/crowns/treeobjects_2021_nyc.csv") |> 
+crown_morphometrics <- read_csv(crown_morphometrics_filepath) |> 
   janitor::clean_names() |> 
   mutate(poly_id = 1:n())
 # Combine the species and morphometrics datasets
@@ -162,15 +169,8 @@ tree_data <- tree_data |>
                                                     genus = ""),
                                            allow.new.levels=TRUE)) |> 
   # Remove implausible crown heights
-  # NOTE: the lower-bound threshold here (1) is compared directly against
-  # crown_height_lumped_spp_ft, i.e. it clamps at 1 FOOT. The equivalent
-  # branch above for crown_height_m clamps at 1/0.3048 ft, i.e. 1 METER.
-  # These two blocks look like they're meant to apply the same clamp policy
-  # - flagging the mismatch rather than silently changing which one is
-  # "correct", since either could be intentional and this affects the
-  # already-published tree_lai_estimates.csv.
   mutate(crown_height_lumped_spp = case_when(
-    crown_height_lumped_spp_ft < 1 ~ 1,
+    crown_height_lumped_spp_ft < 1/0.3048 ~ 1,
     crown_height_lumped_spp_ft > max_tree_height_m/0.3048 ~ max_tree_height_m,
     TRUE ~ crown_height_lumped_spp_ft*0.3048
   )) |>
@@ -187,7 +187,10 @@ tree_data |>
            height_width_ratio < 2.0 ~ "1.0 < HWR < 2.0",
            TRUE ~ "2.0 < HWR"
          )) |> 
-  group_by(factor(crown_ratio_bin, levels=c("      HWR < 0.5", "0.5 < HWR < 1.0", "1.0 < HWR < 2.0", "2.0 < HWR"))) |> 
+  group_by(factor(crown_ratio_bin, levels=c("      HWR < 0.5", 
+                                            "0.5 < HWR < 1.0", 
+                                            "1.0 < HWR < 2.0", 
+                                            "2.0 < HWR"))) |> 
   summarize(count=n(),
             total_count=first(total_count)) |> 
   mutate(fraction=count/total_count)
@@ -212,16 +215,20 @@ shading_coeff_genus_average <- shading_coeff |>
 # Add shade information to tree dataframe
 tree_data <- tree_data |> 
   left_join(shading_coeff_genus_average)
-# For genera without shading coefficient species-specific offsets, just set it to zero for now
+# For genera without shading coefficient species-specific offsets, just set it 
+#   to zero for now
 tree_data <- tree_data |> 
   replace_na(list("shading_coeff_mean" = 0))
 
 # Get list of genera included in NYC classifier
-classified_genera <- unique((tree_data |> drop_na(genus_predicted))$genus_predicted) |> 
+classified_genera <- unique((tree_data |> 
+                               drop_na(genus_predicted))$genus_predicted) |> 
   sort()
-labelled_genera <- unique((tree_data |> drop_na(genus_ref))$genus_ref) |> 
+labelled_genera <- unique((tree_data |> 
+                             drop_na(genus_ref))$genus_ref) |> 
   sort()
-fraction_trees_classified <- nrow(tree_data |> drop_na(genus_merged))/nrow(tree_data)
+fraction_trees_classified <- nrow(tree_data |> 
+                                    drop_na(genus_merged))/nrow(tree_data)
 
 # Estimate Leaf Area and Leaf Area Index for each tree
 tree_data <- tree_data |> 
@@ -554,7 +561,7 @@ write_csv(tree_data, "tree_lai_estimates.csv")
 
 # Add in the spatial information 
 geometry_data <- st_read(
-  dsn = "F:/NYC/Tree_Data/crowns/miller_scientific_data/nyc_class_tree_genus_polygons_v2.gpkg", 
+  dsn = tree_polygons_filepath, 
   query = "SELECT Poly_ID, geom FROM nyc_class_tree_genus_polygons_v2"
 )
 tree_points <- st_centroid(geometry_data)

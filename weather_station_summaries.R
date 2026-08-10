@@ -62,17 +62,6 @@ output_summary_path <- "weather_station_buffer_summaries.csv"
 
 buffer_radii_m <- c(250, 500)
 
-landcover_class_labels <- c(
-  "1" = "tree_canopy",
-  "2" = "grass_shrub",
-  "3" = "bare_ground",
-  "4" = "water",
-  "5" = "building",
-  "6" = "road",
-  "7" = "other_impervious",
-  "8" = "railroad"
-)
-
 # ---- Load input datasets -----------------------------------------------------
 
 weather_stations <- read_csv(weather_station_path) |>
@@ -157,17 +146,10 @@ tree_structure_summary <- summarize_tree_structure(tree_crowns, station_buffers)
 #'   (see class codes in the file header comment).
 #' @param buffers sf polygon layer of buffers, one row per station x
 #'   radius, with columns station_row_id and buffer_radius_m.
-#' @param class_labels Named character vector mapping land cover integer
-#'   codes (as strings) to human-readable class names. NOTE: currently
-#'   unused - the output column names below are hardcoded instead of being
-#'   derived from this argument. Flagging rather than wiring it up, since
-#'   that's a design choice (and landcover_class_labels' existing names,
-#'   e.g. "tree_canopy", don't match the hardcoded "tree_cover" etc. used
-#'   below).
 #' @return Tibble with one row per station_row_id x buffer_radius_m, and
 #'   one frac_cover_* column per land cover class giving fractional cover
 #'   (0-1).
-summarize_landcover_fractions <- function(landcover_raster, buffers, class_labels) {
+summarize_landcover_fractions <- function(landcover_raster, buffers) {
   buffers_reproj <- st_transform(buffers, crs(landcover_raster))
 
   # Only carry the join keys (station_row_id, buffer_radius_m) forward from
@@ -219,7 +201,7 @@ summarize_landcover_fractions <- function(landcover_raster, buffers, class_label
   return(cover_fractions)
 }
 
-landcover_fraction_summary <- summarize_landcover_fractions(landcover, station_buffers, landcover_class_labels)
+landcover_fraction_summary <- summarize_landcover_fractions(landcover, station_buffers)
 
 # ---- Add seasonal variability from MODIS (fixed, average across city) --------
 

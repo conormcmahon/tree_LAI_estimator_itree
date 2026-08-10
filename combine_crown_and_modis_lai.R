@@ -40,6 +40,9 @@ library(phenofit)
 
 rmse <- function(x1, x2){ return(sqrt(mean((x1 - x2)^2, na.rm=TRUE)))}
 
+# Set random seed for consistency
+set.seed(1)
+
 # Load the overall MODIS LAI dataset 
 modis_dir <- "F:/NYC/MODIS/"
 output_dir <- "F:/NYC/iTree_LAI_data/"
@@ -262,7 +265,7 @@ modis_urban_itree_lai_comparison_model <- lm(data=combined_lai_df |>
                                                drop_na(LAI, urban_peak_lai) |> 
                                                filter(!is.infinite(LAI),
                                                       !is.infinite(urban_peak_lai)), 
-                                             LAI ~ urban_peak_lai)
+                                             mean_crown_LAI ~ urban_peak_lai)
 summary(modis_urban_itree_lai_comparison_model)
 rmse(combined_lai_df$LAI, combined_lai_df$urban_peak_lai)
 
@@ -276,12 +279,12 @@ rmse(combined_lai_df$LAI, combined_lai_df$urban_peak_lai)
 MODIS_urban_LAI_comparison_plot <- ggplot(combined_lai_df) +
   geom_point(aes(x=urban_peak_lai, mean_crown_LAI), alpha=0.05) +
   geom_abline(intercept=0, slope=1, linetype="dashed", col="black") +
-  geom_abline(intercept=summary(modis_itree_lai_comparison_model)$coefficients[1,1],
-              slope=summary(modis_itree_lai_comparison_model)$coefficients[2,1],
+  geom_abline(intercept=summary(modis_urban_itree_lai_comparison_model)$coefficients[1,1],
+              slope=summary(modis_urban_itree_lai_comparison_model)$coefficients[2,1],
               linetype="solid", col="red") +
   annotate("text", x=0.5, y=7.5, parse=TRUE, hjust=0,
            label = paste("R^2 == ",
-                         round(summary(modis_itree_lai_comparison_model)$adj.r.squared, 2))) +
+                         round(summary(modis_urban_itree_lai_comparison_model)$adj.r.squared, 2))) +
   annotate("text", x=0.5, y=7, hjust=0,
            label = paste("RMSE = ",
                          round(rmse(combined_lai_df$mean_crown_LAI, combined_lai_df$urban_peak_lai), 2))) +
@@ -332,6 +335,12 @@ applyPhenoModel <- function(t, pheno_model)
 }
 modeled_lai_vals <- data.frame(LAI = applyPhenoModel(1:365, phenofit_results$model$Beck),
                                doy = 1:365)
+first_of_month_doys <- as.Date(paste0("2020-", 1:12, "-01")) - as.Date("2020-01-01") + 1
+first_of_month_doys
+modeled_lai_monthly <- modeled_lai_vals |>
+  filter(doy %in% first_of_month_doys)
+write_csv(modeled_lai_monthly, "modeled_lai_monthly.csv")
+
 
 # Compare to average dates in MODIS phenology product for high-LAI pixels:
 phenometrics |> 

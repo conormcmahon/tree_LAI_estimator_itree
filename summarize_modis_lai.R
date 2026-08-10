@@ -8,14 +8,14 @@
 #   peak LAI and phenology timing, and the seasonal LAI curve implied by the
 #   2024 phenoseries raster.
 #
-# Inputs (all under data_dir, from MODIS products, see Zenodo/NASA sources):
+# Inputs (all under data_dir, derived in GEE from MODIS products):
 #   - MODIS_LAI_summer_NYC_mean.tif: single-band summer-mean LAI raster
-#     (band "Lai").
+#     (band "Lai"). Mean of June-Aug values in "MCD15A3H" data product.  
 #   - MODIS_phenology_mean.tif: multi-band phenometrics raster (greenup,
 #     mid-greenup, maturity, senescence, mid-greendown, dormancy dates, EVI
-#     amplitude, etc).
+#     amplitude, etc), based on "MCD12Q2" data product. 
 #   - MODIS_LAI_NYC_2024_phenoseries.tif: multi-band raster with one LAI
-#     estimate per ~15-day period across 2024.
+#     estimate per ~15-day period across 2024. Built with CORVUS from MCD15A3H. 
 #
 # Output:
 #   This script produces plots for interactive/exploratory review only; it
