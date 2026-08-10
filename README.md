@@ -47,7 +47,7 @@ We use the allometric equations specified by [Nowak, 1996 for iTree](https://www
 
 ![Genus-specific LAI Variation with DBH](output_plots/LAI_crown_diameter_genera_plot.png)
 
-![Overall Variation in LAI with Tree Height](output_plots/LAI_crown_height_plot.png)
+![Overall Variation in LAI with Tree Height](output_plots/LAI_height_plot.png)
 
 # Scaling For Climate Models:
 
